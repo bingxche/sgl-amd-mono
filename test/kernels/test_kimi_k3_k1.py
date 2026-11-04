@@ -29,8 +29,20 @@ import torch
 import torch.nn.functional as F
 from sglang.test.test_utils import CustomTestCase
 
+from sgl_amd_mono.kimi_k3.spec import NUMERICS
+
 BF = torch.bfloat16
-COS_MIN = 0.999
+# The spec's own bounds, so this file and SGLANG_AMD_MONO_CHECK hold the same
+# kernel to the same number. A local constant drifted from the spec once
+# already: it read 0.999 while the spec declared 0.99999 for the same output.
+# The gated core output: its reference sums in another order, so bf16 rounding.
+CORE_COS = NUMERICS.bound("k1.core.cosine")
+# The seam runs the same formula as the K2 launch: slice, gate, mix, then the
+# input norm. The spec declares that one exact.
+SEAM_COS = NUMERICS.bound("k2.x.cosine")
+# A control's ceiling, not a correctness bound: a perturbed run has to come out
+# well below everything above, not merely below the tightest of them.
+CONTROL_COS_MAX = 0.999
 # One request of L tokens: the shape a DSPARK-7 verify step has at concurrency 1.
 REQS = 1
 QLEN = 8
@@ -263,17 +275,21 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
             EPS,
         )
         cos = _cos(case.x_dbg, want)
-        print(f"seam: cos {cos:.6f}")
-        self.assertGreater(cos, COS_MIN, "the attention-residual seam differs")
+        print(f"seam: cos {cos:.8f}")
+        self.assertGreater(cos, SEAM_COS, "the attention-residual seam differs")
 
     def test_in_proj_matches_its_own_x(self):
         case = self.case
-        # Rows past 6284 are padding the kernel never defines.
-        real = 6284
+        # Rows past NDEF are padding the kernel never defines. Taken from the
+        # kernel, not written out again here: the two have to agree, and a
+        # second copy of the number is a second place to get it wrong.
+        kda = case.kda
+        real = kda.NDEF
+        self.assertLess(real, kda.NPROJ, "the padding rows are gone")
         want = F.linear(case.x_dbg, case.w_in[:real])
         cos = _cos(case.proj_dbg[:, :real], want)
-        print(f"in_proj: cos {cos:.6f}")
-        self.assertGreater(cos, COS_MIN, "the in-projection differs")
+        print(f"in_proj: cos {cos:.8f}")
+        self.assertGreater(cos, CORE_COS, "the in-projection differs")
 
     def test_core_out_matches_torch(self):
         case = self.case
@@ -281,8 +297,8 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
         self.assertTrue(bool(torch.isfinite(out).all()), "core_out is not finite")
         self.assertTrue(bool(torch.count_nonzero(out) > 0), "core_out is all zero")
         cos = _cos(out, _kda_reference(case))
-        print(f"core_out: cos {cos:.6f}")
-        self.assertGreater(cos, COS_MIN, "the KDA recurrence differs")
+        print(f"core_out: cos {cos:.8f}")
+        self.assertGreater(cos, CORE_COS, "the KDA recurrence differs")
 
     def test_every_acceptance_count(self):
         """num_acc picks both the conv window offset and the initial state slot.
@@ -294,7 +310,7 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
             case = K1Case(self.device, num_acc=num_acc).run()
             cos = _cos(case.core_out, _kda_reference(case))
             with self.subTest(num_acc=num_acc):
-                self.assertGreater(cos, COS_MIN, f"num_acc={num_acc}: cos {cos:.6f}")
+                self.assertGreater(cos, CORE_COS, f"num_acc={num_acc}: cos {cos:.8f}")
         print(f"acceptance counts 1..{QLEN}: all match")
 
     def test_slot_zero_is_a_real_slot(self):
@@ -309,7 +325,7 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
         case = self.case
         self.assertEqual(int(case.st_idx[0, 0]), 0, "the case must exercise slot 0")
         cos = _cos(case.core_out, _kda_reference(case))
-        self.assertGreater(cos, COS_MIN, f"slot 0 computed wrong (cos {cos:.6f})")
+        self.assertGreater(cos, CORE_COS, f"slot 0 computed wrong (cos {cos:.8f})")
         touched = [
             j
             for j in range(case.rstate.shape[0])
@@ -373,10 +389,15 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
 
         cos = _cos(seeded.core_out, rolling.core_out)
         equal = bool(torch.equal(seeded.core_out, rolling.core_out))
-        print(f"seeded vs rolling: cos {cos:.6f} (equal={equal})")
+        print(f"seeded vs rolling: cos {cos:.8f} (equal={equal})")
         self.assertGreater(
-            cos, COS_MIN, "seeding the window at offset 0 is not equivalent"
+            cos, CORE_COS, "seeding the window at offset 0 is not equivalent"
         )
+        # The two runs feed the kernel the same values at different offsets.
+        # The arithmetic is therefore identical, so equivalent here means bit
+        # for bit. A cosine bound alone would pass a rounding difference, and
+        # that difference says the offset changed what was computed.
+        self.assertTrue(equal, "seeding the window at offset 0 is not exact")
 
     def test_core_out_depends_on_the_initial_state(self):
         """Control: the recurrence must actually read the slot it selects.
@@ -394,13 +415,15 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
         other.rstate_in = other.rstate.clone()
         other.run()
         cos = _cos(other.core_out, case.core_out)
-        print(f"perturbed initial state: cos vs unperturbed {cos:.6f}")
+        print(f"perturbed initial state: cos vs unperturbed {cos:.8f}")
         self.assertLess(
-            cos, COS_MIN, "core_out ignored the initial state slot num_acc selects"
+            cos,
+            CONTROL_COS_MAX,
+            "core_out ignored the initial state slot num_acc selects",
         )
         self.assertGreater(
             _cos(other.core_out, _kda_reference(other)),
-            COS_MIN,
+            CORE_COS,
             "the reference does not track the perturbed initial state",
         )
 
@@ -485,6 +508,14 @@ class TestKimiK3MonoKdaPre(CustomTestCase):
         self.assertTrue(
             torch.equal(short_after[:, : win - 1], long_after[:, : win - 1]),
             "the in-bounds part of the carried window should be unaffected",
+        )
+        # The premise of the whole test: the highest index K1 reads is one
+        # past the end of this buffer. Without this the case below could be a
+        # buffer that is short but never read out of bounds.
+        self.assertEqual(
+            acc_idx + win,
+            short.state_len,
+            "the short buffer is no longer one entry short of the highest read",
         )
         self.assertFalse(
             torch.equal(short_after[:, win - 1], long_after[:, win - 1]),

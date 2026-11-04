@@ -48,6 +48,36 @@ LAUNCH_TIMEOUT = 3600
 GSM8K_BOUND = 0.95
 # Decode against prefill on short prompts, mean KL.
 KL_BOUND = 0.03
+# SGLANG_AMD_MONO_CHECK arm. K1 runs on the KDA layers. Layers 1 to 92 are
+# covered; the dense layer 0 keeps the model's own forward. The checkpoint
+# lists 24 of them as full attention. That leaves 68 KDA layers.
+# Take the count from the config, not from the cadence. linear_attn_config
+# numbers its layers from 1. Its full_attn_layers [4, 8 .. 92, 93] are layers
+# 3, 7 .. 91 and 92 here: 23 on the cadence, plus a 24th off it.
+KDA_LAYERS = 68
+# The first covered layer is layer 1. Its residual contribution is still in
+# flight when K1 would take it. So covered() declines that layer on every
+# step ("this costs one layer a step", k1.py). It is the only KDA layer this
+# arm never sees. Every other layer logs one check a decode step, so the
+# count is layers x steps. A check that stopped engaging on some layers then
+# reads as too few. A bare "no violation was logged" would read as a pass.
+CHECKED_LAYERS = KDA_LAYERS - 1
+# The least number of decode steps this arm must cover. One DSpark verify
+# step is 8 tokens, so the request below is 16 steps. Ask for 10 and leave
+# the rest as room for a step the launch declines.
+CHECK_STEPS = 10
+CHECK_TOKENS = 128
+# The outputs check.py scores, and the bounds spec.py declares for them.
+# This arm is the only thing that runs them. It therefore also pins that all
+# eight are reached. An output that stopped being compared logs nothing and
+# violates nothing.
+CHECK_NAMES = frozenset(
+    f"k1.{out}.{metric}"
+    for out in ("core", "bank", "ssm", "window")
+    for metric in ("cosine", "rel")
+)
+# "monokernel check layer 3: k1.core.cosine=0.99999678 k1.core.rel=0.0026 ..."
+CHECK_LINE = re.compile(r"monokernel check layer (\d+): ((?:k1\.[\w.]+=\S+ ?)+)")
 # The startup line that says the routing is live. The runtime serves whole
 # requests only, so DSpark's 8 tokens a request leave batch size 1.
 RUNS = "runs target_verify steps of batch size [1] x 8 tokens"
@@ -110,7 +140,7 @@ class TestMonokernelKimiK3(CustomTestCase):
                     "num_questions": 200,
                     "max_new_tokens": 512,
                     "parallel": 2,
-                    "host": "http://127.0.0.1",
+                    "host": "127.0.0.1",
                     "port": int(DEFAULT_URL_FOR_TEST.split(":")[-1]),
                 },
             )()
@@ -181,6 +211,91 @@ class TestMonokernelKimiK3Fault(CustomTestCase):
                 self.assertEqual(set(faults) - {"nil", "0x0"}, set(), faults)
             finally:
                 terminate_and_kill_process_tree(process)
+
+
+@unittest.skipIf(_gfx950_gpus() < 8, "needs 8 gfx950 GPUs")
+class TestMonokernelCheck(CustomTestCase):
+    def test_every_k1_launch_is_within_the_bounds(self):
+        """SGLANG_AMD_MONO_CHECK: K1 against SGLang's own attention, a layer at
+        a time, on the real weights at TP8 with one step's state carried into
+        the next.
+
+        The other arms here score tokens. A wrong recurrent state or conv
+        window moves a GSM8K score by a point or two and nothing says which
+        layer did it; this is what names the layer. It is also the only path
+        that runs the ``k1.*`` bounds at all.
+
+        Eager only: the comparison is Python, and a captured graph runs none on
+        replay, hence --disable-cuda-graph.
+        """
+        with (
+            tempfile.NamedTemporaryFile("w+", suffix=".out") as out,
+            tempfile.NamedTemporaryFile("w+", suffix=".err") as err,
+        ):
+            process = _launch(
+                extra_env={"SGLANG_AMD_MONO_CHECK": "1"},
+                extra_args=["--disable-cuda-graph", "--watchdog-timeout", "600"],
+                log=(out, err),
+            )
+            try:
+                r = requests.post(
+                    DEFAULT_URL_FOR_TEST + "/generate",
+                    json={
+                        "text": "Write a long essay about lighthouses.",
+                        "sampling_params": {
+                            "max_new_tokens": CHECK_TOKENS,
+                            "temperature": 0,
+                            "ignore_eos": True,
+                        },
+                    },
+                    timeout=1800,
+                )
+                r.raise_for_status()
+            finally:
+                terminate_and_kill_process_tree(process)
+            out.seek(0)
+            err.seek(0)
+            log = out.read() + err.read()
+
+        checks = [
+            (int(layer), dict(kv.split("=") for kv in values.split()))
+            for layer, values in CHECK_LINE.findall(log)
+        ]
+        # check.py logs the conv window on its own line, after finish(). No
+        # layer's own comparison covers that output.
+        in_layer = [(i, v) for i, v in checks if "k1.core.cosine" in v]
+        handoff = [(i, v) for i, v in checks if "k1.window.cosine" in v]
+        self.assertGreater(
+            len(in_layer), CHECKED_LAYERS * CHECK_STEPS, "too few checked launches"
+        )
+        self.assertGreater(
+            len(handoff), CHECKED_LAYERS * CHECK_STEPS, "too few checked hand-offs"
+        )
+        # Every KDA layer, not just some of them. This is what says K1 is
+        # live on each layer.
+        self.assertEqual(
+            len({i for i, _ in in_layer}),
+            CHECKED_LAYERS,
+            "not every KDA layer checked",
+        )
+        scored = {name for _i, v in checks for name in v}
+        self.assertEqual(scored, set(CHECK_NAMES), scored)
+
+        worst = {
+            name: (min if name.endswith(".cosine") else max)(
+                float(v[name]) for _i, v in checks if name in v
+            )
+            for name in sorted(CHECK_NAMES)
+        }
+        print(
+            f"{len(in_layer)} checked launches, {len(handoff)} hand-offs; "
+            + " ".join(f"{k}={v:.8g}" for k, v in worst.items())
+        )
+        # check.py scores each one against its spec bound. It logs a violation
+        # for a miss. Report a miss, do not work around it. A miss means the
+        # kernel does not reach the spec, or the spec has the wrong number.
+        violations = re.findall(r"monokernel check violation: [^\n]*", log)
+        self.assertEqual(violations, [], violations[:20])
 
 
 if __name__ == "__main__":

@@ -169,7 +169,7 @@ def main():
     w = moe_weights(rank, dev, guint=False)
     w.update(layer_weights(rank, dev))
 
-    fails, seen, first = [], {}, {}
+    fails, seen = [], {}
     for tag, reset in (("accumulate", False), ("reset", True)):
         epoch[0].add_(1)
         out, prefix, key = run(
@@ -204,7 +204,6 @@ def main():
             )
         fails += [f"{tag}/{n}" for n, ok in checks.items() if not ok]
         seen[tag] = xrow
-        first[tag] = out
 
     # Control: the two modes read the input prefix differently, so they must
     # disagree. Without this the two checks above would pass for a kernel that
@@ -214,6 +213,9 @@ def main():
 
     # The captured graph replays the launch. A replay must be bit for bit what
     # the eager launch produced, which is what makes the decode graph safe.
+    # Check both outputs. The next layer reads the prefix, and the forward
+    # carries it across every layer. A wrong prefix therefore grows layer by
+    # layer while this step's own ``out`` still matches.
     epoch[0].add_(1)
     eager_out, eager_prefix, _ = run(
         k2, w, scratch, reset=False, peers=peers, epoch=epoch,
@@ -235,6 +237,9 @@ def main():
             torch.cuda.synchronize()
             if not torch.equal(graph_out, eager_out):
                 fails.append(f"replay {i}: the output is not the eager one")
+                break
+            if not torch.equal(graph_prefix, eager_prefix):
+                fails.append(f"replay {i}: the updated prefix is not the eager one")
                 break
     torch.cuda.synchronize()
     if rank == 0:

@@ -73,9 +73,11 @@ def test_the_spec_is_tp8_and_at_most_eight_rows():
     limits = k3.SPEC.devices["gfx950"]
     assert limits.tp_sizes == (8,)
     assert limits.widths == tuple(range(1, MAX_ROWS + 1))
-    # With DSpark the runtime serves only the widths that hold whole requests,
-    # so block size 7 (8 tokens a request) leaves batch size 1.
-    assert [w // 8 for w in limits.widths if w % 8 == 0] == [1]
+    # DSpark serves only the widths that hold whole requests. One request is
+    # 8 tokens: block size 7 plus its own. So the widest covered width is one
+    # request. Two running requests make a 16-row step, which the launch
+    # declines. The e2e startup line reads this number back off the server.
+    assert MAX_ROWS == 8
 
 
 def test_the_shapes_are_checked_on_the_text_config():
@@ -99,15 +101,41 @@ def test_a_block_size_past_the_launch_is_refused():
 
 
 def test_the_bounds_name_the_launches_and_their_outputs():
-    for name in ("k2.prefix.cosine", "k2.x.cosine", "k2.out.cosine", "moe.out.cosine"):
-        assert 0.0 < k3.SPEC.numerics.bound(name) <= 1.0
+    # Name every output a check scores. A check that reads a bound which is
+    # not here fails at the first step. SGLANG_AMD_MONO_CHECK scores the KDA
+    # launch against the k1.* names.
+    for name in (
+        "k2.prefix.cosine",
+        "k2.x.cosine",
+        "k2.out.cosine",
+        "moe.out.cosine",
+        "k1.core.cosine",
+        "k1.core.rel",
+        "k1.bank.cosine",
+        "k1.bank.rel",
+        "k1.ssm.cosine",
+        "k1.ssm.rel",
+        "k1.window.cosine",
+        "k1.window.rel",
+    ):
+        bound = k3.SPEC.numerics.bound(name)
+        assert 0.0 <= bound <= 1.0, (name, bound)
+        # a cosine bound of 0 would pass on anything; a rel bound of 1.0 the same
+        assert bound > 0.0 if name.endswith(".cosine") else bound < 1.0, (name, bound)
     with pytest.raises(KeyError):
         k3.SPEC.numerics.bound("k2.nothing.cosine")
 
 
-def test_the_build_needs_a_real_model():
-    with pytest.raises((AttributeError, TypeError)):
-        k3.SPEC.build(None, K3, None)
+def test_the_spec_is_refused_on_an_isa_it_was_not_built_for():
+    # The launches are gfx950 assembly. No other ISA may pick the spec up.
+    # The refusal must name the ISA it was asked for.
+    sgl_amd_mono.register_specs()
+    found, why = registry.find_spec(
+        backend=sgl_amd_mono.BACKEND,
+        architectures=["KimiK3ForConditionalGeneration"],
+        isa="gfx942",
+    )
+    assert found is None and "gfx942" in why, why
 
 
 def test_max_blocks_matches_the_reference_config():
