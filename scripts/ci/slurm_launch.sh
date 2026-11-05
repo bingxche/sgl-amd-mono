@@ -73,7 +73,10 @@ stream_log() {  # print what the job appended to $LOG since the last call
     local size
     size="$(stat -c %s "$LOG" 2>/dev/null || echo 0)"
     if (( size > LOG_OFFSET )); then
-        tail -c +"$((LOG_OFFSET + 1))" "$LOG" | head -c "$((size - LOG_OFFSET))"
+        # One process, no pipe: `tail | head` takes SIGPIPE, which pipefail and
+        # set -e turn into the launcher's exit.
+        dd if="$LOG" bs=64K iflag=skip_bytes,count_bytes skip="$LOG_OFFSET" \
+            count="$((size - LOG_OFFSET))" status=none || true
         LOG_OFFSET="$size"
     fi
 }
@@ -88,9 +91,15 @@ wait_for_exit_file() {  # up to 90s; listing the directory forces a fresh NFS lo
     return 1
 }
 
-job_state() {  # "<STATE> <REASON>", or empty if the controller does not know the job
-    scontrol show job "$1" 2>/dev/null \
-        | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^(JobState|Reason)=/) {sub(/^[^=]*=/, "", $i); printf "%s ", $i}}'
+job_state() {  # "<STATE> <REASON>", or empty if neither the controller nor accounting knows the job
+    local s
+    s="$(scontrol show job "$1" 2>/dev/null \
+        | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^(JobState|Reason)=/) {sub(/^[^=]*=/, "", $i); printf "%s ", $i}}' || true)"
+    # scontrol forgets a finished job, and sometimes answers empty for a live one:
+    # ask accounting before calling it gone.
+    # (-n and -o only: the cluster's sacct takes no -X or -P)
+    [[ -n "${s// }" ]] || s="$(sacct -n -j "$1" -o State 2>/dev/null | awk 'NF {print $1; exit}' || true)"
+    echo "$s"
 }
 
 collect() {
@@ -127,7 +136,8 @@ for attempt in $(seq 1 "$SUBMIT_ATTEMPTS"); do
                     break
                 fi ;;
             RUNNING|CONFIGURING|COMPLETING) misses=0; started=1 ;;
-            "") misses=$((misses + 1)); (( misses >= 4 )) && break ;;
+            # Unknown to both for 5 minutes: gone. Breaking early would cancel a live job.
+            "") misses=$((misses + 1)); (( misses >= 20 )) && break ;;
             *) break ;;
         esac
     done

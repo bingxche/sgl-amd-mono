@@ -364,10 +364,9 @@ class Run:
             self.routing(side)
             self.perf(side, model)
             if run_evals:
-                threads = 1
-                if "--max-running-requests" in args:
-                    threads = int(args[args.index("--max-running-requests") + 1])
-                self.evals(side, max(threads, 1))
+                # no more requests in flight than the launches cover: wider steps
+                # take SGLang's own path, and the score would not be the kernels'
+                self.evals(side, max(self.m["gate_concurrency"], default=1))
         finally:
             self.stop(p)
 
