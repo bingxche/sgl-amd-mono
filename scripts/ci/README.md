@@ -64,10 +64,21 @@ Verified and OCRBench are not in the CI yet.
 
 ## Infrastructure
 
-- Nodes: two MI355X nodes of a Slurm cluster, kept for this CI.
+- Nodes: two MI355X nodes kept for this CI, `crsuse2-m2m-v3-060` and
+  `crsuse2-m2m-v3-123` of the Crusoe cluster's `amd-aifw-sglang-ci` partition
+  (`NODES` in `runner.sh`). sglang's own CI uses the partition's other nodes: its
+  runners must set `SLURM_EXCLUDE` to these two, or a job here waits behind theirs.
 - Runners: two, on the cluster's login node (`runner.sh`), label
-  `sgl-amd-mono-mi355x`, each pinned to one node. A runner takes one job at a time,
-  so the two nodes run two models at once and never two jobs on one node.
+  `sgl-amd-mono-mi355x`, r1 pinned to v3-060 and r2 to v3-123. A runner takes one
+  job at a time, so the two nodes run two models at once and never two jobs on one
+  node. To set them up, as the CI account on the login node (with
+  `loginctl enable-linger`), and with a registration token from a repo admin:
+
+  ```bash
+  bash scripts/ci/runner.sh install 1 && bash scripts/ci/runner.sh install 2
+  bash scripts/ci/runner.sh register 1   # paste the token; then the same for 2
+  bash scripts/ci/runner.sh status
+  ```
 - `slurm_launch.sh` (on the runner) submits `slurm_job.sh` as a whole-node job,
   streams its log and collects its results; `slurm_job.sh` (on the node) fetches
   the PR and base commits onto node-local disk, starts the SGLang ROCm container

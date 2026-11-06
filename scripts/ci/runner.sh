@@ -7,9 +7,9 @@
 # checks out the CI scripts and runs sbatch/squeue (slurm_launch.sh). Each instance is a systemd --user service; login-node
 # sessions are reaped at logout, so this needs `loginctl enable-linger`.
 #
-#   bash runner.sh install N NODE           download the runner into rN, pinned to NODE
-#                                           (needs SLURM_PARTITION, CI_NODE_SCRATCH and
-#                                           CI_MODEL_ROOT; see slurm_launch.sh)
+#   bash runner.sh install N [NODE]         download the runner into rN, pinned to NODE
+#                                           (default: the Nth of NODES below); writes the
+#                                           cluster settings below into its .env
 #   bash runner.sh register N [REPO_URL]    register rN (default https://github.com/sgl-project/sgl-amd-mono);
 #                                           reads a registration token on stdin
 #   bash runner.sh start|stop|restart N
@@ -27,10 +27,18 @@ ROOT="${MONO_RUNNER_ROOT:-/var/tmp/sgl-amd-mono-runner-$(id -un)}"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT=sgl-amd-mono-runner
 LABELS=sgl-amd-mono-mi355x
+# The CI nodes, r1 and r2: two of the six nodes of Crusoe's amd-aifw-sglang-ci
+# partition. sglang's own CI runners there must keep off them (SLURM_EXCLUDE in
+# their .env), or a job here waits behind theirs.
+NODES=(crsuse2-m2m-v3-060 crsuse2-m2m-v3-123)
+# Cluster settings (see slurm_launch.sh); the environment at install overrides each
+# one, and a later install without it writes these defaults again.
+: "${SLURM_PARTITION:=amd-aifw-sglang-ci}"
+: "${CI_NODE_SCRATCH:=/mnt/m2m_nobackup/sgl-amd-mono-ci-$(id -un)}"
+: "${CI_MODEL_ROOT:=/shared_nfs/huggingface_models}"
 
 write_env() {
   local dir=$1 node=$2
-  : "${SLURM_PARTITION:?}" "${CI_NODE_SCRATCH:?}" "${CI_MODEL_ROOT:?}"
   {
     echo "LANG=C.UTF-8"
     echo "SLURM_PARTITION=$SLURM_PARTITION"
@@ -70,12 +78,15 @@ EOF
   systemctl --user daemon-reload
 }
 
-inst() { [[ "$1" =~ ^[0-9]+$ ]] || { echo "instance must be a number" >&2; exit 2; }; echo "r$1"; }
+inst() { [[ "$1" =~ ^[0-9]+$ ]] || { echo "instance must be a number" >&2; exit 2; }; echo "r$((10#$1))"; }  # 01 is r1
 
 cmd=${1:-status}; shift || true
 case "$cmd" in
   install)
-    i=$(inst "${1:?instance}"); node=${2:?NODE}; d="$ROOT/$i"
+    i=$(inst "${1:?instance}"); n=${i#r}; d="$ROOT/$i"
+    node=${2:-}
+    if [[ -z "$node" ]] && (( n >= 1 && n <= ${#NODES[@]} )); then node=${NODES[n - 1]}; fi
+    [[ -n "$node" ]] || { echo "install $n: give the node (only r1..r${#NODES[@]} have one)" >&2; exit 2; }
     if [[ ! -x "$d/bin/Runner.Listener" ]]; then
       v=$(curl -sSI --max-time 30 https://github.com/actions/runner/releases/latest \
           | tr -d '\r' | awk -F/ 'tolower($1) ~ /^location:/ {print $NF}'); v=${v#v}
@@ -88,7 +99,7 @@ case "$cmd" in
     echo "$i: runner $("$d/bin/Runner.Listener" --version) in $d, node $node" ;;
   register)
     i=$(inst "${1:?instance}"); url=${2:-https://github.com/sgl-project/sgl-amd-mono}; d="$ROOT/$i"
-    [[ -x "$d/config.sh" ]] || { echo "run: install ${1} NODE" >&2; exit 2; }
+    [[ -x "$d/config.sh" ]] || { echo "run: install ${1} [NODE]" >&2; exit 2; }
     read -rs token; [[ -n "$token" ]] || { echo "no token on stdin" >&2; exit 2; }
     node=$(sed -n 's/^SLURM_NODELIST=//p' "$d/.env")
     (cd "$d" && ./config.sh --unattended --replace --url "$url" --token "$token" \
