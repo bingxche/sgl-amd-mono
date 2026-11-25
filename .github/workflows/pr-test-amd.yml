@@ -197,6 +197,9 @@ jobs:
 
   test:
     needs: plan
+    # The gate a dispatched run skips is upstream of this job too, and a skipped
+    # job anywhere upstream skips it unless its condition says otherwise.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     name: test (${{ matrix.model }}, ${{ matrix.tier }})
     # Two runners on a cluster host that submits Slurm jobs (scripts/ci/runner.sh);
     # each job takes one of the two CI nodes.
