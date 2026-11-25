@@ -22,7 +22,9 @@ nodes:
   runs the test again (cancelling the run on the previous head) until a maintainer
   removes it. Only people with triage access or more can add a label, so read a
   fork PR's code before labelling it, and remove the label if a later push needs a
-  second look.
+  second look. Until then each push sets `AMD PR test` to failed ("Not run"), from
+  a GitHub-hosted runner, so a PR cannot merge without the test once the branch
+  rules require it.
 - `run-ci-extra` runs the same and adds GPQA (or tick `extra` when running the
   workflow by hand). GSM8K's short answers cannot show a loss at long context;
   GPQA's long ones can. Use it for a PR that touches attention, the KV cache or
@@ -164,6 +166,14 @@ and the reviewer verifies them. OCRBench and LiveCodeBench are not in the CI yet
   time and each job takes a whole node, whichever of the two is free, so the two
   nodes run two models at once and never two jobs on one node. The runner's
   `.env` holds no node setting.
+- Job-start hook: the repository is public, so a PR could add a workflow of its
+  own that names the runners' label. `job_started_hook.sh`, which `runner.sh`
+  copies next to the runners and sets as their `ACTIONS_RUNNER_HOOK_JOB_STARTED`,
+  refuses every job but `pr-test-amd.yml` and `nightly-amd.yml` as main has them,
+  on their own events (a dispatch may run from any branch), and a PR test of a PR
+  without `run-ci` or `run-ci-extra`.
+  After changing it, `bash runner.sh hook` on the runner host puts the new copy in
+  place (the runners read it at each job; no restart).
 - `slurm_launch.sh` (on the runner) submits `slurm_job.sh` as a whole-node job,
   streams its log and collects its results; `slurm_job.sh` (on the node) fetches
   the PR and base commits onto node-local disk, starts the SGLang ROCm container
