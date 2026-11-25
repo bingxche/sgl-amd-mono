@@ -86,9 +86,11 @@ jobs:
           fi
           echo "run=false" >> "$GITHUB_OUTPUT"
           gh api "repos/$REPO/statuses/$SHA" -f state=failure -f context="$STATUS_CONTEXT" \
-            -f description="Not run: a maintainer adds the run-ci label to start it" \
+            -f description="Not run: adding the run-ci label starts a new run (re-running this one does not)" \
             -f target_url="$README" > /dev/null
-          echo "::error::The AMD PR test runs only on a PR with the 'run-ci' (or 'run-ci-extra') label, which a maintainer adds."
+          # A re-run keeps this event's labels, and the runners' job-start hook reads
+          # those, so it would refuse the test even with the label added since.
+          echo "::error::The AMD PR test runs only on a PR with the 'run-ci' (or 'run-ci-extra') label, which a maintainer adds. Adding it starts a new run; do not re-run this one."
           exit 1
 
   plan:

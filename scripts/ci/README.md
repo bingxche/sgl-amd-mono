@@ -24,7 +24,8 @@ nodes:
   fork PR's code before labelling it, and remove the label if a later push needs a
   second look. Until then each push sets `AMD PR test` to failed ("Not run"), from
   a GitHub-hosted runner, so a PR cannot merge without the test once the branch
-  rules require it.
+  rules require it. Adding the label starts a new run; re-running a "Not run" one
+  does not test (the runners check the labels the run started with).
 - `run-ci-extra` runs the same and adds GPQA (or tick `extra` when running the
   workflow by hand). GSM8K's short answers cannot show a loss at long context;
   GPQA's long ones can. Use it for a PR that touches attention, the KV cache or
