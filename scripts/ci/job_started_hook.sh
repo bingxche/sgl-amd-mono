@@ -20,8 +20,12 @@
 ALLOWED_REPO="sgl-project/sgl-amd-mono"
 MAIN="refs/heads/main"
 ALLOWED_WORKFLOWS="pr-test-amd.yml nightly-amd.yml"
+# This copy's git blob hash, logged with every verdict: the copy on the runner is
+# updated by hand (runner.sh hook), so compare it with
+# `git ls-tree origin/main scripts/ci/job_started_hook.sh` to see that it is current.
+version="$({ printf 'blob %d\0' "$(wc -c < "$0")"; cat "$0"; } | sha1sum | cut -c1-12)"
 deny() {
-  echo "::error::This runner only serves $ALLOWED_WORKFLOWS in $ALLOWED_REPO, from $MAIN but when dispatched (a PR needs the run-ci label). Refusing: $1"
+  echo "::error::This runner only serves $ALLOWED_WORKFLOWS in $ALLOWED_REPO, from $MAIN but when dispatched (a PR needs the run-ci label). Refusing: $1 (hook $version)"
   exit 1
 }
 # GITHUB_WORKFLOW_REF = <owner>/<repo>/.github/workflows/<file>@<ref>
@@ -50,4 +54,4 @@ case "$wf_file:${GITHUB_EVENT_NAME:-}" in
     ;;
   *) deny "event '${GITHUB_EVENT_NAME:-}' for $wf_file" ;;
 esac
-echo "job allowed: $wf_file@$wf_at (${GITHUB_EVENT_NAME}) run ${GITHUB_RUN_ID:-?} by ${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR:-?}}"
+echo "job allowed: $wf_file@$wf_at (${GITHUB_EVENT_NAME}) run ${GITHUB_RUN_ID:-?} by ${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR:-?}} (hook $version)"

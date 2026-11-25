@@ -174,7 +174,10 @@ and the reviewer verifies them. OCRBench and LiveCodeBench are not in the CI yet
   on their own events (a dispatch may run from any branch), and a PR test of a PR
   without `run-ci` or `run-ci-extra`.
   After changing it, `bash runner.sh hook` on the runner host puts the new copy in
-  place (the runners read it at each job; no restart).
+  place (the runners read it at each job; no restart). Each verdict in a job's
+  log ends with `(hook <hash>)`, the copy's git blob hash: when it differs from
+  `git ls-tree origin/main scripts/ci/job_started_hook.sh`, the runners have an
+  old copy.
 - `slurm_launch.sh` (on the runner) submits `slurm_job.sh` as a whole-node job,
   streams its log and collects its results; `slurm_job.sh` (on the node) fetches
   the PR and base commits onto node-local disk, starts the SGLang ROCm container
