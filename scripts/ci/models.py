@@ -61,9 +61,38 @@ COMMON_KERNEL_TESTS = [
     "test/kernels/test_compiled_dispatch.py",
 ]
 # What a PR's common job leaves to the nightly (pytest -k): the TP4 fault sweep
-# (8 fault runs, 9 of stage A's ~14 minutes). A PR still runs the TP2 fault test
+# (8 fault runs, 9 of `common`'s ~14 minutes). A PR still runs the TP2 fault test
 # and the clean run, so the guard's stop on a fault is checked on every PR.
 PR_COMMON_KERNEL_DESELECT = "not test_fault_stops_every_rank_tp4"
+
+# The PR test's stages, in order: a stage that fails stops the ones after it. The
+# first two are jobs of their own (cpu-tests.yml, then `common`); the rest run in each
+# model's job (run_model.py). (name, what it runs), as the report shows them.
+PR_STAGES = [
+    ("static-checks", "CPU: every test under test/unit, the SGLang contract included"),
+    (
+        "common-runtime",
+        "`common`: the unit tests on a GPU node and the common kernel tests (guard, sync, compiled dispatch)",
+    ),
+    (
+        "server-check",
+        "the PR's server with the monokernels on: startup, routing lines, 8 requests; the serving tests that check routing and KL against prefill",
+    ),
+    (
+        "serving-tests",
+        "the model's other serving tests (MTP verify, per-layer numerics, passkey, GSM8K 200, the fault stop last)",
+    ),
+    (
+        "kernel-tests",
+        "the model's kernel tests at the PR's widths, TP2/TP4, and its kernel timing scripts",
+    ),
+    (
+        "accuracy-and-perf",
+        "the base branch's speed test and timing scripts, then GSM8K with the monokernels on vs off and the PR's speed test (each after an untimed warm-up pass)",
+    ),
+]
+# The tests in a model's serving test file that the server-check stage runs.
+SERVER_CHECK_SELECT = "match_prefill or run_the_monokernels"
 
 # Paths whose change runs every model.
 SHARED_PATHS = ("sgl_amd_mono/common/", "sgl_amd_mono/__init__.py", "pyproject.toml")
