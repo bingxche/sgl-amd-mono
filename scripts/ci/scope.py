@@ -5,8 +5,9 @@
 
 ``files.json`` is the PR's file list as the GitHub API returns it (``pulls/N/files``:
 ``filename``, ``status``, ``patch``). Reads the PR's tree (``--pr-dir``) for its model
-READMEs only; nothing from the PR runs here. Writes ``scope.json`` and, under GitHub
-Actions, the ``matrix`` (a JSON list of {model, tier}) and ``title_type`` step outputs.
+READMEs only; nothing from the PR runs here. Writes ``scope.json`` (``common`` and the
+models) and, under GitHub Actions, the ``matrix`` (the models: a JSON list of {model,
+tier}), ``has_models`` and ``title_type`` step outputs.
 """
 
 import argparse
@@ -191,6 +192,10 @@ def main():
         models = {k: ("requested", "full") for k in keys}
     else:
         models = models_for(files)
+    # every run tests `common` first, as a job of its own (the common-runtime stage)
+    models.setdefault(
+        "common", ("every PR runs it before its models (common-runtime)", "full")
+    )
     models = {k: {"why": why, "tier": tier} for k, (why, tier) in models.items()}
     m = TITLE.match(args.title)
     title_type = m.group(1) if m else ""
@@ -209,10 +214,14 @@ def main():
     print(json.dumps(scope, indent=2))
     if out := os.environ.get("GITHUB_OUTPUT"):
         with open(out, "a") as f:
+            # the model jobs; `common` is a job of its own, before them
             matrix = [
-                {"model": k, "tier": v["tier"]} for k, v in sorted(models.items())
+                {"model": k, "tier": v["tier"]}
+                for k, v in sorted(models.items())
+                if k != "common"
             ]
             f.write(f"matrix={json.dumps(matrix)}\n")
+            f.write(f"has_models={str(bool(matrix)).lower()}\n")
             f.write(f"title_type={title_type}\n")
 
 

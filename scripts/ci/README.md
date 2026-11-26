@@ -50,6 +50,32 @@ oldest first, so it is an estimate.
 
 ## What runs
 
+### Stages
+
+A PR test runs in stages (`PR_STAGES` in `models.py`); each starts only once the
+one before it passed, so a PR that breaks something fails in minutes instead of
+holding both GPU runners for hours. The report lists a stage an earlier failure
+stopped as not run (⏭️).
+
+| Stage | Where | Runs |
+| --- | --- | --- |
+| `static-checks` | `cpu-tests.yml`, a GitHub-hosted CPU runner | every test under `test/unit` (the SGLang contract, each model's spec logic, the copied-code digests) against a pinned SGLang source (`SGLANG_REF`); a test that also fails on the PR's merge-base, the same way, is the base branch's (`cpu_tests.py`). Tests that need AITER or a GPU fail or skip here the same way on both sides; `common-runtime` runs them |
+| `common-runtime` | the `test (common, full)` job, a CI node | the unit tests again on a GPU node (the base branch's failures excused the same way) and the common kernel tests |
+| `server-check` | each model's job | the PR's server with the monokernels on: startup, its routing lines, 8 requests; then the model's serving tests that check routing and KL against prefill (`SERVER_CHECK_SELECT`) |
+| `serving-tests` | same | the model's other serving tests: MTP verify, per-layer numerics, passkey, GSM8K 200, the fault stop |
+| `kernel-tests` | same | the model's kernel tests at the PR's widths, and its kernel timing scripts |
+| `accuracy-and-perf` | same | GSM8K on and off (GPQA too with `run-ci-extra`), the speed test, then the base branch's timing scripts and speed test |
+
+`static-checks` runs on every push to a PR, with no label: `cpu-tests.yml`
+triggers on `pull_request` (no secret, a read-only token), and the AMD PR test's
+`static-checks` job waits for that run's verdict on the PR's head. A first-time
+contributor's run waits for a maintainer's approval in the Actions tab, and so does
+the PR test. A model's stages stop at the first that fails; the tests tier stops after
+`kernel-tests`. A cluster job of `common` that never ran (Slurm, the node) does not
+stop the models: the job fails, and the model jobs still run.
+
+### Which models
+
 `scope.py` maps a PR's changed files to models (`models.py`). The PR test runs
 only the models InferenceX still benchmarks (the "default" models of
 <https://inferencex.semianalysis.com/infx/inference>). An entry with `"pr": False`
@@ -62,10 +88,9 @@ MiniMax-M3) or one whose checkpoint is not on the CI nodes. A dispatch with
 - a change to `sgl_amd_mono/common/`, `sgl_amd_mono/__init__.py` or
   `pyproject.toml` runs every other model's **smoke** tier, and `common`;
 - a model whose tests changed (`test/...`) but not its package code runs the
-  **tests** tier: its unit, kernel and serving tests, with no base side, speed
-  test or accuracy benchmark, since the served kernels are the base branch's;
-- a PR that changes no model runs `common`: the unit tests and the common kernel
-  tests.
+  **tests** tier: its serving and kernel tests, with no base side, speed test or
+  accuracy benchmark, since the served kernels are the base branch's;
+- every PR runs `common` (`common-runtime`), before any model.
 - a PR whose package code changes in more than `FULL_TIER_MAX_MODELS` (3) models,
   such as a refactor or an API move across packages, runs each of them at the
   **smoke** tier instead of the full one, and `common` in full: fourteen full-tier
@@ -96,7 +121,7 @@ these sides:
 
 | Check | PR test, full tier | PR test, smoke tier | Nightly | Weekly |
 | --- | --- | --- | --- | --- |
-| Tests | unit (on the base branch too), the model's kernel tests and serving tests (`test/e2e`) | same | unit, kernel and serving tests | same |
+| Tests | unit (in `static-checks` and `common`, on the base branch too), the model's kernel tests and serving tests (`test/e2e`) | same | unit, kernel and serving tests | same |
 | Kernel microbenchmark | the model's timing scripts, base and PR | same | main | main |
 | Accuracy | sgl-eval GSM8K (1319 questions), on and off; GPQA too with `run-ci-extra` | the serving tests' GSM8K and KL bounds | GSM8K, GPQA Diamond (and MMMU-Pro for vision models), on | the nightly's and AIME26 x4, on and off |
 | E2E performance | InferenceX fixed length at the model's concurrencies, base and on | the gate concurrencies only | on (against the monokernel-off reference) | off and on |
