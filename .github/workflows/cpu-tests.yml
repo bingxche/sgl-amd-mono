@@ -27,8 +27,8 @@ jobs:
     timeout-minutes: 90
     env:
       REF: ${{ github.event.pull_request.head.sha || github.sha }}
-      # a push to main compares with nothing: every failure fails
-      BASE: ${{ github.event.pull_request.base.sha || '' }}
+      # a PR compares with its merge-base, a push to main with the commit before it
+      BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
       # The SGLang the tests import. Pinned, so a change in SGLang main's packaging
       # cannot stop every PR here; move it forward with the SGLang ROCm image.
       SGLANG_REF: a987a5b1947d63549bb50e1bb3d2778f477ab27c
@@ -48,7 +48,8 @@ jobs:
           persist-credentials: false
 
       - name: Check out the base branch
-        if: env.BASE != ''
+        # (a new branch's first push has no commit before it: 000...0)
+        if: env.BASE != '' && !startsWith(env.BASE, '0000000')
         run: |
           base="$(git -C pr merge-base "$BASE" "$REF" 2>/dev/null || echo "$BASE")"
           git -C pr worktree add -q --detach ../base "$base"
@@ -87,6 +88,7 @@ jobs:
       - name: Run test/unit
         shell: bash
         run: |
+          [[ -d base ]] || BASE=""
           python3 harness/scripts/ci/cpu_tests.py --pr pr ${BASE:+--base base} --out results \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
