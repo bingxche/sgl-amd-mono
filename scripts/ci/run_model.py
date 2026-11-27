@@ -683,7 +683,12 @@ class Run:
             (n, self.result["tests"][n]) for n in names if n in self.result["tests"]
         ]
         bad = [
-            f"{n}: {c['failed']} failed" + (" (timed out)" if c.get("timeout") else "")
+            f"{n}: {c['failed']} failed"
+            + (" (timed out)" if c.get("timeout") else "")
+            + "".join(
+                f"; first: `{i}`: {(c.get('failed_msgs') or {}).get(i, '')[:300]}"
+                for i in (c.get("failed_ids") or [])[:1]
+            )
             for n, c in runs
             if c["failed"]
         ]
@@ -810,12 +815,25 @@ class Run:
             res["serve"] = self.smoke("pinned")
         self.save()
 
+    def startup_error(self, side):
+        """The line of the server's log that says why it stopped: the last
+        exception or error line, else its last line."""
+        try:
+            lines = (self.logs / f"server-{side}.log").read_text(errors="replace")
+        except OSError:
+            return "no server log"
+        lines = [x.strip() for x in lines.splitlines() if x.strip()]
+        for x in reversed(lines):
+            if re.search(r"(Error|Exception|error:|Traceback|exit code)", x):
+                return x[-300:]
+        return lines[-1][-300:] if lines else "empty server log"
+
     def smoke(self, side):
         """A server with the monokernels on (the installed package): its routing
         lines and ``PINNED_REQUESTS`` short requests. "pass (...)" or "fail: why"."""
         p, model, _ = self.serve(side, mono=True)
         if p is None:
-            return "fail: the server did not start"
+            return f"fail: the server did not start: {self.startup_error(side)}"
         try:
             self.routing(side)
             bad = []

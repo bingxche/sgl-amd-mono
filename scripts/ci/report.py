@@ -540,6 +540,25 @@ def stage_table(r, checks):
     return rows, states
 
 
+def fast_fail(r):
+    """The line that says which stage stopped a model's job, on which error, and
+    what it kept from running; None when no stage failed."""
+    stages = r.get("stages", {})
+    failed = [n for n, st in stages.items() if st.get("state") == FAIL]
+    if not failed:
+        return None
+    skipped = [n for n, st in stages.items() if st.get("state") == NOT_RUN]
+    head = f"{ICON[FAIL]} **FAST FAIL at `{failed[0]}`**: {stages[failed[0]].get('why', '?')}"
+    if not skipped:
+        return head
+    return (
+        head
+        + "\n\nNot run because of it: "
+        + ", ".join(f"`{n}`" for n in skipped)
+        + "."
+    )
+
+
 def model_section(key, r, needs_gain):
     if r.get("not_run"):
         # an earlier stage (static-checks, common-runtime) failed: no job started
@@ -574,6 +593,8 @@ def model_section(key, r, needs_gain):
         "",
     ]
     stage_rows, stage_states = stage_table(r, checks) if r.get("stages") else ([], [])
+    if ff := fast_fail(r):
+        lines += [ff, ""]
     if stage_rows:
         lines += ["| | Stage | Ran | Time |", "|---|---|---|---|", *stage_rows, ""]
     lines += ["| | Check | Result |", "|---|---|---|"]
@@ -718,17 +739,25 @@ def main():
         scope = json.loads(Path(args.scope).read_text())
         needs_gain = scope["needs_gain"]
         rules = scope["rules"]
-        states, sections = [], []
+        states, sections, fast_fails = [], [], []
         for key in sorted(scope["models"]):
-            s, text = model_section(key, load(results, key), needs_gain)
+            r = load(results, key)
+            s, text = model_section(key, r, needs_gain)
             states.append(s)
+            stages = r.get("stages", {})
+            failed = [n for n, st in stages.items() if st.get("state") == FAIL]
+            if failed:
+                fast_fails.append((key, failed[0], stages[failed[0]].get("why", "?")))
             why = scope["models"][key]
             sections.append(
                 text.replace(
                     "\n\n", f"\n\nRuns because {why['why']} ({why['tier']} tier). ", 1
                 )
             )
-        rule_rows = []
+        rule_rows = [
+            (f"FAST FAIL: `{k}` at `{stage}`", FAIL, why[:300])
+            for k, stage, why in fast_fails
+        ]
         if args.static_checks:
             ok = args.static_checks == "success"
             rule_rows.append(
