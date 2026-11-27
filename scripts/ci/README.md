@@ -83,7 +83,7 @@ stopped as not run (⏭️).
 | `server-check` | each model's job | the PR's server with the monokernels on: startup, its routing lines, 8 requests; then the model's serving tests that check routing and KL against prefill (`SERVER_CHECK_SELECT`) |
 | `serving-tests` | same | the model's other serving tests: MTP verify, per-layer numerics, passkey, GSM8K 200, the fault stop |
 | `kernel-tests` | same | the model's kernel tests at the PR's widths, and its kernel timing scripts |
-| `accuracy-and-perf` | same | the base branch's timing scripts and speed test, then GSM8K on and off (GPQA too with `run-ci-extra`) and the PR's speed test; each speed test runs after an untimed pass of the same load |
+| `accuracy-and-perf` | same | the base branch's timing scripts and speed test, then GSM8K on and off (GPQA too with `run-ci-extra`) and the PR's speed test; each speed test runs after an untimed pass of the same load and a radix-cache flush (`/flush_cache`) |
 
 `static-checks` runs on every push to a PR, with no label: `cpu-tests.yml`
 triggers on `pull_request` (no secret, a read-only token), and the AMD PR test's

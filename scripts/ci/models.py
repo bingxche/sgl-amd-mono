@@ -88,7 +88,7 @@ PR_STAGES = [
     ),
     (
         "accuracy-and-perf",
-        "the base branch's speed test and timing scripts, then GSM8K with the monokernels on vs off and the PR's speed test (each after an untimed warm-up pass)",
+        "the base branch's speed test and timing scripts, then GSM8K with the monokernels on vs off and the PR's speed test (each after an untimed warm-up pass and a cache flush)",
     ),
 ]
 # The tests in a model's serving test file that the server-check stage runs.
