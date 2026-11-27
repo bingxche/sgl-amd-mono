@@ -374,9 +374,18 @@ class Run:
             )
             # An untimed pass of the same load first: the shapes a server meets the
             # first time compile then, into caches the next server in this container
-            # reuses, so the side timed first would otherwise read 2-5% slower.
+            # reuses, so the side timed first would otherwise read 2-5% slower. Its
+            # prompts are the timed pass's (one seed), so the radix cache is flushed
+            # in between: else about half the timed pass's prefill comes from it.
             warm = self.logs / f"bench-{side}-c{c}-warmup.jsonl"
             self.sh(bench + str(warm), f"bench-{side}-c{c}-warmup", timeout=3 * 3600)
+            try:
+                flushed = requests.post(
+                    f"http://127.0.0.1:{PORT}/flush_cache", timeout=120
+                ).status_code
+            except requests.RequestException as e:
+                flushed = type(e).__name__
+            self.log(f"flush_cache after the warm-up pass: {flushed}")
             rc = self.sh(bench + str(out), f"bench-{side}-c{c}", timeout=3 * 3600)
             rows = out.read_text().splitlines() if out.exists() else []
             if rc or not rows:
