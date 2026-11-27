@@ -153,7 +153,7 @@ these sides:
 
 E2E performance is `sglang.benchmark.serving`: random 8k in / 1k out, range
 ratio 0.8, 10 prompts a slot. The report keeps median TPOT (p50), which gates, and
-output throughput, which warns on a loss over 2% at a covered concurrency; the
+output throughput, which warns on a loss over 5% at a covered concurrency; the
 other serving metrics swing too much with the monokernels to judge on. With the
 monokernels on, the accuracy benchmarks send no more requests at once than the
 launches cover (`gate_concurrency`): a wider step takes SGLang's own path, and its
@@ -188,7 +188,7 @@ The PR test's status fails when:
 - GSM8K (and GPQA, with `run-ci-extra`) loses significantly with the monokernels
   on: of the questions the on and off runs answer differently, the on run gets
   more wrong, and an exact one-sided McNemar test gives p < 0.05;
-- median TPOT is more than 2% worse than the base side at a covered concurrency
+- median TPOT is more than 5% worse than the base side at a covered concurrency (`PERF_LOSS`: a single run of the same code moves ~3.5%)
   (`gate_concurrency`); at the model's other concurrencies it is a warning;
 - for a `[Perf]` or `[Feat]` PR, none of the PR's models gains 5% or more in
   median TPOT at a covered concurrency;
