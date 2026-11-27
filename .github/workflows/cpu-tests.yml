@@ -29,10 +29,8 @@ jobs:
       REF: ${{ github.event.pull_request.head.sha || github.sha }}
       # a PR compares with its merge-base, a push to main with the commit before it
       BASE: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
-      # The SGLang the tests import: main, which the daily ROCm image follows a day
-      # behind, so a PR that reads a field SGLang just added passes here. If main
-      # does not install, this known-good commit stands in (move it forward now
-      # and then).
+      # When the newest image's SGLang commit cannot be read (Docker Hub down), the
+      # tests run against this one
       SGLANG_FALLBACK_REF: a987a5b1947d63549bb50e1bb3d2778f477ab27c
     steps:
       # The script that judges, from the event's commit (the PR merged into its base)
@@ -59,10 +57,25 @@ jobs:
           git -C pr worktree add -q --detach ../base "$base"
           echo "base: $(git -C base log -1 --format='%h %s')"
 
-      - name: Check out SGLang main
+      # The SGLang the GPU stages test against: the commit inside the newest ROCm
+      # image, the one the PR test's plan picks (scripts/ci/image_sglang.py)
+      - name: The SGLang commit of the newest ROCm image
+        id: sglang
+        run: |
+          if got="$(python3 harness/scripts/ci/image_sglang.py)"; then
+            read -r tag sha <<< "$got"
+            echo "SGLang $sha from rocm/sgl-dev:$tag"
+          else
+            sha="$SGLANG_FALLBACK_REF"
+            echo "::warning::could not read the newest image's SGLang commit; testing against $sha"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out SGLang
         uses: actions/checkout@v4
         with:
           repository: sgl-project/sglang
+          ref: ${{ steps.sglang.outputs.sha }}
           path: sglang
           sparse-checkout: python
           persist-credentials: false
@@ -83,12 +96,7 @@ jobs:
           python -m pip install -q uv
           uv pip install --system -q torch --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -q pytest requests msgspec setuptools setuptools-rust setuptools-scm wheel "flydsl==0.4.2"
-          if ! uv pip install --system -q --no-build-isolation --prerelease allow ./sglang/python; then
-            echo "::warning::SGLang main does not install; testing against $SGLANG_FALLBACK_REF"
-            git -C sglang fetch -q --depth 1 origin "$SGLANG_FALLBACK_REF"
-            git -C sglang checkout -q FETCH_HEAD
-            uv pip install --system -q --no-build-isolation --prerelease allow ./sglang/python
-          fi
+          uv pip install --system -q --no-build-isolation --prerelease allow ./sglang/python
           uv pip uninstall --system flashinfer-python flashinfer-cubin flashinfer-jit-cache nvidia-cutlass-dsl || true
           uv pip list --system 2>/dev/null | grep -iE "^(torch|flydsl|sglang|sgl-kernel|triton|transformers) " || true
           echo "SGLANG_SHA=$(git -C sglang rev-parse --short=10 HEAD)" >> "$GITHUB_ENV"

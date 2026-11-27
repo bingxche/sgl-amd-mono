@@ -78,7 +78,7 @@ stopped as not run (⏭️).
 
 | Stage | Where | Runs |
 | --- | --- | --- |
-| `static-checks` | `cpu-tests.yml`, a GitHub-hosted CPU runner | every test under `test/unit` (the SGLang contract, each model's spec logic, the copied-code digests) against SGLang main's source (a pinned commit, `SGLANG_FALLBACK_REF`, if main does not install); a test that also fails on the PR's merge-base, the same way, is the base branch's (`cpu_tests.py`). A test that fails only for want of AITER or a GPU is left to `common-runtime`, which runs it on a GPU node |
+| `static-checks` | `cpu-tests.yml`, a GitHub-hosted CPU runner | every test under `test/unit` (the SGLang contract, each model's spec logic, the copied-code digests) against the SGLang commit inside the newest ROCm image, the one the GPU stages run on (`image_sglang.py`; `SGLANG_FALLBACK_REF` if Docker Hub cannot be read); a test that also fails on the PR's merge-base, the same way, is the base branch's (`cpu_tests.py`). A test that fails only for want of AITER or a GPU is left to `common-runtime`, which runs it on a GPU node |
 | `common-runtime` | the `test (common, full)` job, a CI node | the unit tests again on a GPU node (the base branch's failures excused the same way) and the common kernel tests |
 | `server-check` | each model's job | the PR's server with the monokernels on: startup, its routing lines, 8 requests; then the model's serving tests that check routing and KL against prefill (`SERVER_CHECK_SELECT`) |
 | `serving-tests` | same | the model's other serving tests: MTP verify, per-layer numerics, passkey, GSM8K 200, the fault stop |
