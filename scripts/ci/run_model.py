@@ -318,6 +318,7 @@ class Run:
         while time.time() < deadline:
             if p.poll() is not None:
                 self.log(f"server {side} exited {p.returncode} during startup")
+                self.start_failure = f"exited {p.returncode} during startup"
                 return None, model, args
             try:
                 if requests.get(
@@ -329,6 +330,7 @@ class Run:
                 pass
             time.sleep(10)
         self.log(f"server {side} not ready after {LAUNCH_TIMEOUT}s")
+        self.start_failure = f"not ready after {LAUNCH_TIMEOUT} s"
         self.stop(p)
         return None, model, args
 
@@ -379,13 +381,14 @@ class Run:
             # in between: else about half the timed pass's prefill comes from it.
             warm = self.logs / f"bench-{side}-c{c}-warmup.jsonl"
             self.sh(bench + str(warm), f"bench-{side}-c{c}-warmup", timeout=3 * 3600)
-            try:
-                flushed = requests.post(
-                    f"http://127.0.0.1:{PORT}/flush_cache", timeout=120
-                ).status_code
-            except requests.RequestException as e:
-                flushed = type(e).__name__
+            flushed = self.flush_cache()
             self.log(f"flush_cache after the warm-up pass: {flushed}")
+            if flushed != 200:
+                res[str(c)] = {
+                    "error": f"cache not flushed after the warm-up ({flushed})"
+                }
+                self.save()
+                continue
             rc = self.sh(bench + str(out), f"bench-{side}-c{c}", timeout=3 * 3600)
             rows = out.read_text().splitlines() if out.exists() else []
             if rc or not rows:
@@ -403,6 +406,22 @@ class Run:
                     )
                 }
             self.save()
+
+    def flush_cache(self):
+        """Flush the server's radix cache: its status code, or the error. SGLang
+        refuses while requests are in flight, so it is retried for a minute."""
+        got = None
+        for _ in range(6):
+            try:
+                got = requests.post(
+                    f"http://127.0.0.1:{PORT}/flush_cache", timeout=120
+                ).status_code
+            except requests.RequestException as e:
+                got = type(e).__name__
+            if got == 200:
+                break
+            time.sleep(10)
+        return got
 
     def evals(self, side, threads, names):
         res = self.result["accuracy"].setdefault(side, {})
@@ -741,7 +760,10 @@ class Run:
         bad = [x["cmd"] for x in self.result["microbench"].get("pr", []) if x["rc"]]
         state, detail = self._tests_state("kernels")
         if bad:
-            return "fail", f"timing script failed: {bad[0]}"
+            detail = f"timing script failed: {bad[0]}" + (
+                f"; {detail}" if state == "fail" else ""
+            )
+            return "fail", detail
         if "kernels" not in self.result["tests"] and not self.m.get("microbench"):
             return "skip", "no kernel tests or timing scripts for this model"
         return state, detail
@@ -833,6 +855,9 @@ class Run:
         lines and ``PINNED_REQUESTS`` short requests. "pass (...)" or "fail: why"."""
         p, model, _ = self.serve(side, mono=True)
         if p is None:
+            why = getattr(self, "start_failure", "")
+            if why.startswith("not ready"):
+                return f"fail: the server did not start: {why}"
             return f"fail: the server did not start: {self.startup_error(side)}"
         try:
             self.routing(side)

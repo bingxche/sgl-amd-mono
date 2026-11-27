@@ -40,6 +40,8 @@ PASS, WARN, FAIL = "pass", "warn", "fail"
 NOT_RUN = "not_run"
 # shown for the reviewer, no verdict: the measured speed gain of a [Perf] PR
 INFO = "info"
+# a stage with nothing to run for this model (no serving tests, no checkpoint here)
+SKIP = "skip"
 
 
 def tests_tier(r):
@@ -60,6 +62,7 @@ ICON = {
     FAIL: "❌ fail",
     NOT_RUN: "⏭️ not run",
     INFO: "ℹ️ info",
+    SKIP: "➖ skip",
 }
 MARKER = "<!-- sgl-amd-mono-ci -->"
 
@@ -495,6 +498,14 @@ def pinned_check(r):
     return (FAIL if bad else PASS), " · ".join(parts)
 
 
+def _test_file(test_id):
+    """test.e2e.test_x_server.TestY::test_z -> test_x_server.py"""
+    parts = test_id.split("::")[0].split(".")
+    if len(parts) > 1 and parts[-1][:1].isupper():
+        parts = parts[:-1]  # a unittest class
+    return parts[-1] + ".py"
+
+
 def stage_tests(r, stage):
     """What a stage of a model's job ran, for its row: the test files and how many
     of their tests passed, the timing scripts, the benchmarks."""
@@ -502,9 +513,7 @@ def stage_tests(r, stage):
     for name, st in PR_TEST_RUNS.items():
         c = t.get(name)
         if st == stage and c:
-            files = sorted(
-                {i.split("::")[0].rsplit(".", 1)[-1] for i in c.get("ran", [])}
-            )
+            files = sorted({_test_file(i) for i in c.get("ran", [])})
             out.append(
                 f"{RUN_LABEL.get(name, name)}: {c['passed']}/{c['passed'] + c['failed']} passed"
                 + (f" ({', '.join(files)})" if files else "")
@@ -539,7 +548,7 @@ def stage_table(r, checks):
             state = worst(
                 *(by_name.get(n, PASS) for n in ("Accuracy", "E2E performance"))
             )
-        state = {"skip": WARN}.get(state, state)
+        # (a skipped stage is no verdict; its check rows warn when it matters)
         states.append(state)
         why = st.get("why", "")
         secs = st.get("seconds")

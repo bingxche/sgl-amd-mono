@@ -232,7 +232,7 @@ jobs:
           # the newest run of the check on the head; none yet for 20 minutes means
           # GitHub holds it (a first-time contributor's run waits for approval) or
           # the head predates cpu-tests.yml
-          for i in $(seq 1 115); do
+          for i in $(seq 1 105); do
             got="$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
               --jq '[.check_runs[] | select(.name == env.CHECK)] | sort_by(.started_at) | last
                     | if . == null then "none -" else "\(.status) \(.conclusion // "-") \(.html_url)" end' \

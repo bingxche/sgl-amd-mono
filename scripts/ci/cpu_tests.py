@@ -11,6 +11,7 @@ main) every failure fails. Prints a markdown summary for the job summary.
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -21,6 +22,11 @@ from report import _same_failure  # noqa: E402
 from run_model import failure_signature  # noqa: E402
 
 TIMEOUT = 1800
+# a failure that only says this runner lacks AITER or a GPU
+NEEDS_GPU = re.compile(
+    r"No module named '(aiter|flydsl\._mlir)|No CUDA GPUs are available"
+    r"|Torch not compiled with CUDA enabled|Found no NVIDIA driver|no HIP GPUs"
+)
 
 
 def run_unit(src: Path, xml: Path) -> dict:
@@ -101,7 +107,10 @@ def main():
         )
         print("\n".join(lines))
         return 1
-    failed = sorted(pr["failed_msgs"])
+    # what this runner cannot run (no AITER, no GPU) is `common`'s to judge, on a
+    # GPU node: a new test that needs them does not fail here
+    gpu_only = sorted(i for i, m in pr["failed_msgs"].items() if NEEDS_GPU.search(m))
+    failed = sorted(i for i in pr["failed_msgs"] if i not in gpu_only)
     if base is None:
         new, known, why = failed, [], "no base branch to compare with"
     elif base["failed_msgs"] is None:
@@ -122,6 +131,10 @@ def main():
         )
         print("\n".join(lines))
         return 1
+    if gpu_only:
+        lines.append(
+            f"➖ {len(gpu_only)} need AITER or a GPU; `common` runs them on a GPU node: {_names(gpu_only)}"
+        )
     if known:
         lines.append(
             f"⚠️ {len(known)} also fail on the base branch, the same way (not this PR's): {_names(known)}"
@@ -134,7 +147,7 @@ def main():
         lines += ["", "<details><summary>Messages</summary>", ""]
         lines += [f"- `{i}`: {pr['failed_msgs'][i][:300]}" for i in new]
         lines += ["", "</details>"]
-    elif not known:
+    elif not known and not gpu_only:
         lines.append("✅ every test passed")
     print("\n".join(lines))
     return 1 if new else 0
