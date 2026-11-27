@@ -52,7 +52,14 @@ def run_unit(src: Path, xml: Path) -> dict:
         ).returncode
     except subprocess.TimeoutExpired:
         rc = 124
-    res = {"rc": rc, "passed": 0, "failed": 0, "skipped": 0, "failed_msgs": None}
+    res = {
+        "rc": rc,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "failed_msgs": None,
+        "gpu_only": set(),
+    }
     if not xml.exists():
         return res
     state, msgs = {}, {}
@@ -63,6 +70,9 @@ def run_unit(src: Path, xml: Path) -> dict:
         if bad:
             state[tid] = "failed"
             msgs.setdefault(tid, failure_signature(bad[0], src.resolve()))
+            # a file that does not import says why in its text, not its message
+            if NEEDS_GPU.search(f"{bad[0].get('message') or ''} {bad[0].text or ''}"):
+                res["gpu_only"].add(tid)
         elif any(c.tag == "skipped" for c in case):
             state.setdefault(tid, "skipped")
         else:
@@ -109,7 +119,7 @@ def main():
         return 1
     # what this runner cannot run (no AITER, no GPU) is `common`'s to judge, on a
     # GPU node: a new test that needs them does not fail here
-    gpu_only = sorted(i for i, m in pr["failed_msgs"].items() if NEEDS_GPU.search(m))
+    gpu_only = sorted(pr["gpu_only"])
     failed = sorted(i for i in pr["failed_msgs"] if i not in gpu_only)
     if base is None:
         new, known, why = failed, [], "no base branch to compare with"
