@@ -54,7 +54,13 @@ def tests_tier(r):
     )
 
 
-ICON = {PASS: "✅", WARN: "⚠️", FAIL: "❌", NOT_RUN: "⏭️", INFO: "ℹ️"}
+ICON = {
+    PASS: "✅ pass",
+    WARN: "⚠️ warn",
+    FAIL: "❌ fail",
+    NOT_RUN: "⏭️ not run",
+    INFO: "ℹ️ info",
+}
 MARKER = "<!-- sgl-amd-mono-ci -->"
 
 
@@ -372,6 +378,13 @@ PR_TEST_RUNS = {
     "e2e": "serving-tests",
     "kernels": "kernel-tests",
 }
+# what each test run is, in the report: test/unit, test/kernels and test/e2e
+RUN_LABEL = {
+    "unit": "logic tests (test/unit, no GPU kernels)",
+    "kernels": "kernel tests (test/kernels: each launch against SGLang's ops)",
+    "e2e-gate": "server tests: routing and KL vs prefill (test/e2e)",
+    "e2e": "server tests: the rest (test/e2e)",
+}
 
 
 def tests_check(key, r):
@@ -393,19 +406,21 @@ def tests_check(key, r):
         c = t.get(name)
         if c is None and (why := stopped(r, PR_TEST_RUNS.get(name, ""))):
             states.append(NOT_RUN)
-            parts.append(f"{name}: not run ({why})")
+            parts.append(f"{RUN_LABEL.get(name, name)}: not run ({why})")
             continue
         if c is None and name == "e2e-gate" and "stages" in r:
             # server-check stopped at the server, before its serving tests
             st = r["stages"].get("server-check", {})
             states.append(FAIL if st.get("state") == FAIL else WARN)
-            parts.append(f"{name}: did not run ({st.get('why', '?')})")
+            parts.append(
+                f"{RUN_LABEL.get(name, name)}: did not run ({st.get('why', '?')})"
+            )
             continue
         if c is None:
             states.append(FAIL)
             parts.append(f"{name}: did not run")
             continue
-        s = f"{name} {c['passed']} passed"
+        s = f"{RUN_LABEL.get(name, name)}: {c['passed']} passed"
         new, why = compare_base(r, name, c) if c["failed"] else (None, None)
         if new == []:
             # every failure also fails on the base branch, with the same message: the
@@ -491,7 +506,7 @@ def stage_tests(r, stage):
                 {i.split("::")[0].rsplit(".", 1)[-1] for i in c.get("ran", [])}
             )
             out.append(
-                f"{name} {c['passed']}/{c['passed'] + c['failed']} passed"
+                f"{RUN_LABEL.get(name, name)}: {c['passed']}/{c['passed'] + c['failed']} passed"
                 + (f" ({', '.join(files)})" if files else "")
             )
     if stage == "server-check" and r.get("server_check"):
@@ -549,7 +564,7 @@ def fast_fail(r):
     if not failed:
         return None
     skipped = [n for n, st in stages.items() if st.get("state") == NOT_RUN]
-    head = f"{ICON[FAIL]} **FAST FAIL at `{failed[0]}`**: {stages[failed[0]].get('why', '?')}"
+    head = f"❌ **FAST FAIL at `{failed[0]}`**: {stages[failed[0]].get('why', '?')}"
     if not skipped:
         return head
     return (
@@ -567,7 +582,7 @@ def model_section(key, r, needs_gain):
             [
                 f"### {MODELS.get(key, {}).get('name', key)} (`{key}`)",
                 "",
-                f"{ICON[NOT_RUN]} Not run: {r['not_run']}.",
+                f"⏭️ Not run: {r['not_run']}.",
             ]
         )
     checks = [("Scope", *scope_check(key, r))] if key != "common" else []
@@ -732,7 +747,7 @@ def main():
         overall = worst(*states)
         head = [
             MARKER,
-            f"## {args.title}: {ICON[overall]} {overall}",
+            f"## {args.title}: {ICON[overall]}",
             "",
             f"Models: {', '.join(f'`{k}`' for k in keys)} · monokernels on vs off{run}",
         ]
@@ -805,7 +820,7 @@ def main():
         )
         head = [
             MARKER,
-            f"## AMD PR test: {ICON[overall]} {overall}",
+            f"## AMD PR test: {ICON[overall]}",
             "",
             f"Models: {', '.join(f'`{k}`' for k in sorted(scope['models']))} · {gain_note}{run}",
             "",
