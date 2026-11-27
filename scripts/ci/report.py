@@ -29,7 +29,6 @@ from models import (  # noqa: E402
     EXTRA_EVALS,
     GAIN_TYPES,
     MODELS,
-    PERF_GAIN,
     PERF_LOSS,
     PR_EVALS,
     PR_STAGES,
@@ -39,6 +38,8 @@ from models import (  # noqa: E402
 PASS, WARN, FAIL = "pass", "warn", "fail"
 # a check or stage an earlier stage's failure stopped: no verdict of its own
 NOT_RUN = "not_run"
+# shown for the reviewer, no verdict: the measured speed gain of a [Perf] PR
+INFO = "info"
 
 
 def tests_tier(r):
@@ -53,7 +54,7 @@ def tests_tier(r):
     )
 
 
-ICON = {PASS: "✅", WARN: "⚠️", FAIL: "❌", NOT_RUN: "⏭️"}
+ICON = {PASS: "✅", WARN: "⚠️", FAIL: "❌", NOT_RUN: "⏭️", INFO: "ℹ️"}
 MARKER = "<!-- sgl-amd-mono-ci -->"
 
 
@@ -271,7 +272,7 @@ def perf_check(key, r, needs_gain):
     else:
         rule = f"no loss over {PERF_LOSS:.0%} at conc {m['gate_concurrency']}"
         if needs_gain and best is not None:
-            rule += f"; best gain {best:+.1%} (the ≥{PERF_GAIN:.0%} gain is judged across the PR)"
+            rule += f"; best gain {best:+.1%} (for reference)"
         sides = "base → PR"
     return (
         worst(PASS, *states),
@@ -783,22 +784,22 @@ def main():
             }
             if not gains:
                 rule_rows.append(
-                    ("Speed gain", WARN, "no model has a speed result to judge")
+                    ("Speed gain (for reference)", INFO, "no model has a speed result")
                 )
             else:
                 k, g = max(gains.items(), key=lambda kv: kv[1])
-                ok = g >= PERF_GAIN
                 rule_rows.append(
                     (
-                        "Speed gain",
-                        PASS if ok else FAIL,
-                        f"best median-TPOT gain {g:+.1%} (`{k}`); needs ≥{PERF_GAIN:.0%} at a covered concurrency of one of the PR's models",
+                        "Speed gain (for reference)",
+                        INFO,
+                        f"best median-TPOT gain measured here {g:+.1%} (`{k}`, at a covered concurrency); "
+                        "the author's numbers in the PR are what show the speedup",
                     )
                 )
         states += [s for _, s, _ in rule_rows]
         overall = worst(*states)
         gain_note = (
-            f"`[{scope['title_type']}]` PR: needs a ≥{PERF_GAIN:.0%} median-TPOT gain at a covered concurrency of one of its models."
+            f"`[{scope['title_type']}]` PR: the author shows the speedup; this test checks for no loss over {PERF_LOSS:.0%} and shows the gain it measures."
             if needs_gain
             else f"`[{scope['title_type'] or '?'}]` PR: no speed gain needed; no loss over {PERF_LOSS:.0%}."
         )

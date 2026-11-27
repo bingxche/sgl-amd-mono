@@ -190,8 +190,6 @@ The PR test's status fails when:
   more wrong, and an exact one-sided McNemar test gives p < 0.05;
 - median TPOT is more than 5% worse than the base side at a covered concurrency (`PERF_LOSS`: a single run of the same code moves ~3.5%)
   (`gate_concurrency`); at the model's other concurrencies it is a warning;
-- for a `[Perf]` or `[Feat]` PR, none of the PR's models gains 5% or more in
-  median TPOT at a covered concurrency;
 - a step of the run (base, tests, on, off, e2e, ...) raised an error;
 - the PR changes existing lines of `.github/CODEOWNERS` (a new model's added
   owner line is a warning for the reviewer).

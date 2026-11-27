@@ -170,13 +170,13 @@ ALPHA = 0.05
 
 # The speed gate, base side (the PR's merge-base) to PR. Every PR fails on a
 # median-TPOT loss of more than PERF_LOSS at a gate (covered) concurrency; at the
-# other measured concurrencies such a loss warns. A [Perf] or [Feat] PR also needs
-# a gain of at least PERF_GAIN at a gate concurrency of one of its models.
+# other measured concurrencies such a loss warns. A [Perf] or [Feat] PR's gain is
+# shown, not judged: its author gives the speedup, measured where it applies.
 # PERF_LOSS is above the single-run noise: the same commit timed twice in one job
 # differs by up to ~3.5% in median TPOT (DeepSeek-V4.1, c2-c8: the acceptance
 # length and the other requests' prefills vary from run to run), so a 2% bound
 # failed PRs that changed nothing.
-PERF_GAIN, PERF_LOSS = 0.05, 0.05
+PERF_LOSS = 0.05
 GAIN_TYPES = ("Perf", "Feat")
 
 MODELS = {
