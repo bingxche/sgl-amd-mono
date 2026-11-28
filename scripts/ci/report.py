@@ -557,7 +557,7 @@ def stage_table(r, checks):
             f"| {ICON[state]} | `{stage}` | {ran}"
             + (
                 f" — {why}"
-                if state in (FAIL, WARN, NOT_RUN) and why and why not in ran
+                if state in (FAIL, WARN, NOT_RUN, SKIP) and why and why not in ran
                 else ""
             )
             + f" | {f'{secs // 60} min' if secs is not None else '–'} |"
